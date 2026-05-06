@@ -284,6 +284,7 @@ export default function MissionControlClient() {
         onRespawn={handleRefresh}
         onInject={handleInject}
         onNewTab={handleNewTab}
+        onNewPage={handleAddPage}
         onRefresh={handleRefresh}
         onSetCommand={handleSetCommand}
         modalOpen={modalOpen || setCommandModalOpen || renameModalOpen || deleteModalOpen}

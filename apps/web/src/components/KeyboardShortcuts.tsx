@@ -12,6 +12,7 @@ interface KeyboardShortcutsProps {
   onRespawn: () => void;
   onInject: () => void;
   onNewTab: () => void;
+  onNewPage: () => void;
   onRefresh: () => void;
   onSetCommand: () => void;
   modalOpen: boolean;
@@ -27,6 +28,7 @@ export default function KeyboardShortcuts({
   onRespawn,
   onInject,
   onNewTab,
+  onNewPage,
   onRefresh,
   onSetCommand,
   modalOpen,
@@ -39,10 +41,17 @@ export default function KeyboardShortcuts({
       const ctrl = e.ctrlKey || e.metaKey;
       const shift = e.shiftKey;
 
-      // New tab: Cmd/Ctrl+Shift+T
+      // New terminal: Cmd/Ctrl+Shift+T
       if (ctrl && shift && (e.key === "t" || e.key === "T")) {
         e.preventDefault();
         onNewTab();
+        return;
+      }
+
+      // New page tab: Cmd/Ctrl+T
+      if (ctrl && !shift && (e.key === "t" || e.key === "T")) {
+        e.preventDefault();
+        onNewPage();
         return;
       }
 
@@ -60,7 +69,20 @@ export default function KeyboardShortcuts({
         return;
       }
 
-      // Page switching: Ctrl+Shift+Arrow
+      // Page switching: Cmd+Option+Arrow (macOS) or Ctrl+Shift+Arrow
+      if (e.metaKey && e.altKey && !e.shiftKey && !e.ctrlKey) {
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          onNextPage();
+          return;
+        }
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          onPrevPage();
+          return;
+        }
+      }
+
       if (ctrl && shift) {
         if (e.key === "ArrowRight") {
           e.preventDefault();
@@ -111,7 +133,7 @@ export default function KeyboardShortcuts({
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [onNextPage, onPrevPage, onFocusUp, onFocusDown, onFocusLeft, onFocusRight, onRespawn, onInject, onNewTab, onRefresh, onSetCommand, modalOpen]);
+  }, [onNextPage, onPrevPage, onFocusUp, onFocusDown, onFocusLeft, onFocusRight, onRespawn, onInject, onNewTab, onNewPage, onRefresh, onSetCommand, modalOpen]);
 
   return null;
 }

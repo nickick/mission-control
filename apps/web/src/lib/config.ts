@@ -14,8 +14,8 @@ export const config: AppConfig = {
     },
   ],
   shortcuts: {
-    nextPage: "ctrl+shift+right",
-    prevPage: "ctrl+shift+left",
+    nextPage: "cmd+opt+right / ctrl+shift+right",
+    prevPage: "cmd+opt+left / ctrl+shift+left",
     focusUp: "ctrl+up",
     focusDown: "ctrl+down",
     focusLeft: "ctrl+left",

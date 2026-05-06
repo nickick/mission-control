@@ -106,21 +106,24 @@ export default function SetCommandModal({
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="stats-host" className="text-[#858585]">
-                Stats source
-              </Label>
-              <select
-                id="stats-host"
-                value={statsHost}
-                onChange={(e) => setStatsHost(e.target.value)}
-                className="h-9 w-full rounded-lg border border-[#333] bg-[#252526] px-2.5 py-1 text-sm text-[#cccccc] outline-none focus-visible:border-[#4fc1ff]"
-              >
+              <Label className="text-[#858585]">Stats source</Label>
+              <div className="flex gap-2">
                 {STATS_HOSTS.map((h) => (
-                  <option key={h.value} value={h.value}>
+                  <button
+                    key={h.value}
+                    type="button"
+                    onClick={() => setStatsHost(h.value)}
+                    className={
+                      "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors cursor-pointer " +
+                      (statsHost === h.value
+                        ? "border-[#4fc1ff] bg-[#4fc1ff]/10 text-[#4fc1ff]"
+                        : "border-[#333] bg-[#252526] text-[#858585] hover:border-[#555] hover:text-[#cccccc]")
+                    }
+                  >
                     {h.label}
-                  </option>
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
           </div>
 

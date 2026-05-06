@@ -1,0 +1,12 @@
+{
+  "name": "@mission-control/electron",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "electron:dev": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^42.0.0"
+  }
+}

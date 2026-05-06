@@ -103,6 +103,10 @@ export function useTerminalSocket(
 
     const resize = () => {
       try {
+        // Don't fit if the terminal is in a hidden page (display: none).
+        // offsetParent is null when the element or an ancestor is hidden.
+        if (!terminal.element || terminal.element.offsetParent === null) return;
+
         fitAddon.fit();
         const dims = fitAddon.proposeDimensions();
         if (dims && ws.readyState === WebSocket.OPEN) {
@@ -123,36 +127,19 @@ export function useTerminalSocket(
     setTimeout(resize, 50);
     window.addEventListener("resize", resize);
 
-    // Refit + redraw when tab/window becomes visible after being hidden
-    const refitAndNotify = () => {
-      try {
-        fitAddon.fit();
-        terminal.refresh(0, terminal.rows - 1);
-        const dims = fitAddon.proposeDimensions();
-        if (dims && ws.readyState === WebSocket.OPEN) {
-          ws.send(
-            JSON.stringify({
-              type: "resize",
-              cols: dims.cols,
-              rows: dims.rows,
-            } as WSMessage)
-          );
-        }
-      } catch {
-        // ignore
-      }
-    };
-    const handleVisibility = () => {
-      if (!document.hidden) refitAndNotify();
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", refitAndNotify);
+    // ResizeObserver catches element size changes including becoming visible
+    // after display:none → display:block (page tab switches within the app).
+    const resizeObserver = new ResizeObserver(() => {
+      resize();
+    });
+    if (terminal.element) {
+      resizeObserver.observe(terminal.element);
+    }
 
     return () => {
       disposable.dispose();
       window.removeEventListener("resize", resize);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", refitAndNotify);
+      resizeObserver.disconnect();
       fitAddon.dispose();
       ws.close();
     };

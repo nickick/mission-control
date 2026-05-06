@@ -113,6 +113,8 @@ interface RemoteCpuSample {
 }
 
 const remoteCpuCache = new Map<string, RemoteCpuSample>();
+const remoteStatsFailureCache = new Map<string, number>();
+const REMOTE_STATS_FAILURE_LOG_INTERVAL_MS = 60_000;
 
 function parseRemoteCpu(statLine: string, host: string): number {
   // Format: "cpu  12345 0 6789 98765 0 0 0 0 0 0"
@@ -157,8 +159,32 @@ function execPromise(command: string, timeout: number): Promise<string> {
 
 export async function collectRemoteStats(host: string): Promise<SystemStats | null> {
   try {
-    // One-shot SSH command that collects everything we need
-    const script = `
+    // Detect remote OS first
+    const unameOutput = await execPromise(
+      `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes ${host} 'uname -s'`,
+      5000
+    );
+    const isDarwin = unameOutput.trim() === "Darwin";
+
+    let script: string;
+    if (isDarwin) {
+      // macOS remote — use macOS-native commands
+      script = `
+echo "---LOAD---"
+sysctl -n vm.loadavg
+echo "---MEM---"
+sysctl -n hw.memsize
+echo "---MEMVM---"
+vm_stat
+echo "---DISK---"
+df -k / | tail -1 | awk '{print $2,$3}'
+echo "---CPU---"
+top -l 1 -n 0 | grep '^CPU usage'
+echo "---DONE---"
+`;
+    } else {
+      // Linux remote — /proc based
+      script = `
 echo "---LOAD---"
 cat /proc/loadavg
 echo "---MEM---"
@@ -169,6 +195,7 @@ echo "---CPU---"
 grep '^cpu ' /proc/stat
 echo "---DONE---"
 `;
+    }
 
     const output = await execPromise(
       `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes ${host} '${script.replace(/'/g, "'\"'\"'")}'`,
@@ -177,7 +204,7 @@ echo "---DONE---"
 
     let load1min = 0;
     let memTotal = 0;
-    let memAvailable = 0;
+    let memUsed = 0;
     let diskTotal = 0;
     let diskUsed = 0;
     let cpuStatLine = "";
@@ -187,31 +214,67 @@ echo "---DONE---"
     for (const line of lines) {
       if (line.startsWith("---LOAD---")) { section = "load"; continue; }
       if (line.startsWith("---MEM---")) { section = "mem"; continue; }
+      if (line.startsWith("---MEMVM---")) { section = "memvm"; continue; }
       if (line.startsWith("---DISK---")) { section = "disk"; continue; }
       if (line.startsWith("---CPU---")) { section = "cpu"; continue; }
       if (line.startsWith("---DONE---")) break;
 
       if (section === "load" && line.trim()) {
-        const parts = line.trim().split(/\s+/);
-        load1min = parseFloat(parts[0] ?? "0");
+        if (isDarwin) {
+          // { 1.23 0.89 0.75 }
+          const m = line.trim().match(/\{\s*([0-9.]+)/);
+          load1min = m ? parseFloat(m[1]) : 0;
+        } else {
+          const parts = line.trim().split(/\s+/);
+          load1min = parseFloat(parts[0] ?? "0");
+        }
       }
       if (section === "mem" && line.trim()) {
-        const parts = line.trim().split(/\s+/);
-        memTotal = parseInt(parts[0] ?? "0", 10) * 1024;
-        memAvailable = parseInt(parts[1] ?? "0", 10) * 1024;
+        if (isDarwin) {
+          // hw.memsize in bytes
+          memTotal = parseInt(line.trim(), 10);
+        } else {
+          const parts = line.trim().split(/\s+/);
+          memTotal = parseInt(parts[0] ?? "0", 10) * 1024;
+          const memAvailable = parseInt(parts[1] ?? "0", 10) * 1024;
+          memUsed = memTotal - memAvailable;
+        }
+      }
+      if (section === "memvm" && isDarwin && line.trim()) {
+        // Parse vm_stat lines to accumulate used pages
+        const match = line.match(/Pages\s+(\w+):\s+(\d+)/);
+        if (match) {
+          const key = match[1];
+          const val = parseInt(match[2], 10);
+          // Count active, inactive, speculative, wired, compressor as "used"
+          if (["active", "inactive", "speculative", "wired down", "occupied by compressor"].includes(key)) {
+            memUsed += val * 4096; // assume 4KB pages
+          }
+        }
       }
       if (section === "disk" && line.trim()) {
         const parts = line.trim().split(/\s+/);
         diskTotal = parseInt(parts[0] ?? "0", 10) * 1024;
         diskUsed = parseInt(parts[1] ?? "0", 10) * 1024;
       }
-      if (section === "cpu" && line.trim().startsWith("cpu ")) {
-        cpuStatLine = line.trim();
+      if (section === "cpu" && line.trim()) {
+        if (isDarwin) {
+          // CPU usage: 7.5% user, 12.3% sys, 80.2% idle
+          const userMatch = line.match(/([0-9.]+)%\s+user/);
+          const sysMatch = line.match(/([0-9.]+)%\s+sys/);
+          const user = userMatch ? parseFloat(userMatch[1]) : 0;
+          const sys = sysMatch ? parseFloat(sysMatch[1]) : 0;
+          cpuStatLine = String(Math.round(user + sys));
+        } else {
+          cpuStatLine = line.trim();
+        }
       }
     }
 
-    const cpuPercent = parseRemoteCpu(cpuStatLine, host);
-    const memUsed = memTotal - memAvailable;
+    const cpuPercent = isDarwin
+      ? parseInt(cpuStatLine || "0", 10)
+      : parseRemoteCpu(cpuStatLine, host);
+
     const memPercent = memTotal > 0 ? Math.round((memUsed / memTotal) * 100) : 0;
     const diskPercent = diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 100) : 0;
 
@@ -223,11 +286,17 @@ echo "---DONE---"
       diskUsed,
       diskTotal,
       diskPercent,
-      uptime: 0, // Not worth SSHing again for uptime
+      uptime: 0,
       host,
     };
   } catch (err) {
-    console.error(`[stats] remote stats failed for ${host}:`, err);
+    const now = Date.now();
+    const lastLogged = remoteStatsFailureCache.get(host) ?? 0;
+    if (now - lastLogged > REMOTE_STATS_FAILURE_LOG_INTERVAL_MS) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[stats] remote stats unavailable for ${host}: ${message}`);
+      remoteStatsFailureCache.set(host, now);
+    }
     return null;
   }
 }

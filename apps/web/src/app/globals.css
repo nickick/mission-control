@@ -22,6 +22,8 @@ html, body, #__next {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .terminal-cell.focused {
@@ -60,18 +62,109 @@ html, body, #__next {
 
 .terminal-body {
   flex: 1;
-  overflow: hidden;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+  overscroll-behavior: contain;
+}
+
+.terminal-scroll-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 6500px;
   position: relative;
 }
 
+.terminal-mount {
+  height: 6500px;
+  position: relative;
+  top: 0;
+}
+
+.terminal-scroll-to-content {
+  position: sticky;
+  left: calc(100% - 30px);
+  bottom: 8px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -30px 8px 8px auto;
+  border: 1px solid #3a3a3a;
+  border-radius: 999px;
+  background: rgba(37, 37, 38, 0.88);
+  color: #9cdcfe;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.terminal-scroll-to-content:hover {
+  border-color: #4fc1ff;
+  color: #ffffff;
+  opacity: 1;
+}
+
 .xterm-viewport::-webkit-scrollbar {
-  width: 6px;
+  width: 0;
+  height: 0;
 }
 
 .xterm-viewport::-webkit-scrollbar-thumb {
-  background: #444;
+  background: transparent;
   border-radius: 3px;
 }
+
+.xterm-viewport {
+  background-color: transparent !important;
+  margin: 0 !important;
+  overflow-y: hidden !important;
+  overscroll-behavior: contain;
+  padding: 0 !important;
+  pointer-events: none !important;
+  scrollbar-width: none;
+  z-index: 0;
+}
+
+.xterm-screen {
+  z-index: 1;
+}
+
+/* Next.js dev indicator — dim the "N" badge */
+nextjs-portal {
+  opacity: 0.2 !important;
+}
+
+/* xterm.js positions the helper textarea at the cursor location.
+   We need it invisible AND non-interactive so it doesn't intercept
+   mouse clicks/drags (which causes weird browser-native selections).
+   xterm.js focuses it programmatically, so pointer-events: none is safe. */
+.xterm-helper-textarea {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  color: transparent !important;
+  caret-color: transparent !important;
+}
+
+/* Only prevent native selection on the helper layer, not on the
+   whole terminal — xterm.js handles its own selection on canvas. */
+.xterm-helpers {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* xterm.js uses this to measure character widths. display:none breaks
+   font metrics, but opacity:0 keeps it in layout while hiding it. */
+.xterm-width-cache-measure-container {
+  opacity: 0 !important;
+}
+
+
 
 @layer base {
   :root {
