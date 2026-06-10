@@ -67,20 +67,59 @@ html, body, #__next {
   overflow-x: hidden;
   position: relative;
   overscroll-behavior: contain;
+  overflow-anchor: none;
+  scroll-behavior: auto;
+  /* Always reserve the scrollbar gutter. If the scrollbar takes layout
+     space only while visible, its appearance shrinks the terminal width,
+     which resizes the PTY, which reflows content — an endless redraw loop
+     when content hovers around one screenful. */
+  scrollbar-gutter: stable;
+}
+
+/* Firefox fallback only — Chromium ignores ::-webkit-scrollbar styling
+   whenever the standard scrollbar properties are set. */
+@supports not selector(::-webkit-scrollbar) {
+  .terminal-body {
+    scrollbar-width: thin;
+    scrollbar-color: #0c0c0c transparent;
+  }
+}
+
+/* Minimalist scrollbar: narrow, black thumb with a gray border. */
+.terminal-body::-webkit-scrollbar {
+  width: 7px;
+}
+
+.terminal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-body::-webkit-scrollbar-thumb {
+  background: #0c0c0c;
+  border: 1px solid #4fc1ff;
+  border-radius: 4px;
+}
+
+.terminal-body::-webkit-scrollbar-thumb:hover {
+  border-color: #9cdcfe;
 }
 
 .terminal-scroll-content {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  height: 6500px;
+  /* Heights are kept in sync with the rendered terminal content from JS. */
+  height: 100%;
   position: relative;
 }
 
 .terminal-mount {
-  height: 6500px;
+  height: 100%;
   position: relative;
   top: 0;
+  /* The xterm screen inside is a tall fixed-row viewport; clip it so the
+     scrollable height tracks actual content, not the full viewport. */
+  overflow: hidden;
 }
 
 .terminal-scroll-to-content {
@@ -143,6 +182,15 @@ nextjs-portal {
    mouse clicks/drags (which causes weird browser-native selections).
    xterm.js focuses it programmatically, so pointer-events: none is safe. */
 .xterm-helper-textarea {
+  position: fixed !important;
+  left: -1000px !important;
+  top: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
   opacity: 0 !important;
   pointer-events: none !important;
   color: transparent !important;
@@ -152,6 +200,15 @@ nextjs-portal {
 /* Only prevent native selection on the helper layer, not on the
    whole terminal — xterm.js handles its own selection on canvas. */
 .xterm-helpers {
+  position: fixed !important;
+  left: -1000px !important;
+  top: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  contain: strict;
   opacity: 0 !important;
   pointer-events: none !important;
   user-select: none;

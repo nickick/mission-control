@@ -8,9 +8,9 @@ import { useTerminalSocket } from "@/hooks/useTerminalSocket";
 import { useSessionSummary } from "@/hooks/useSessionSummary";
 
 const LARGE_TERMINAL_ROWS = 2000;
-const MAX_TERMINAL_HEIGHT = 6500;
-const EMPTY_ROW_RUN_CUTOFF = 100;
-const FORCE_MAX_HEIGHT_COMMANDS = [/^ssvta\b/];
+const CONTENT_PADDING_ROWS = 1;
+const CONTENT_GAP_CUTOFF_ROWS = 100;
+const AUTO_SCROLL_BOTTOM_THRESHOLD = 4;
 
 interface TerminalInstanceProps {
   sessionId: string;
@@ -83,48 +83,34 @@ export default React.memo(function TerminalInstance({
       return renderedRow?.getBoundingClientRect().height || (term.options.fontSize ?? 11) * 1.2;
     };
 
-    const getLastContentRowIndex = () => {
-      const rows = Array.from(
-        terminalMount.querySelectorAll<HTMLElement>(".xterm-rows > div")
-      );
-      let lastContentRowIndex = -1;
-      let emptyRun = 0;
-
-      for (let index = 0; index < rows.length; index++) {
-        const row = rows[index];
-        const hasText = Boolean(row.textContent?.trim());
-        const hasCursor = Boolean(row.querySelector(".xterm-cursor"));
-
-        if (hasText || hasCursor) {
-          lastContentRowIndex = index;
-          emptyRun = 0;
-          continue;
-        }
-
-        if (lastContentRowIndex >= 0) {
-          emptyRun++;
-          if (emptyRun >= EMPTY_ROW_RUN_CUTOFF) break;
+    // Last viewport row that holds content. The cursor row (the prompt /
+    // input box) is the anchor; from there, extend downward only while
+    // content stays reasonably contiguous. A bottom-anchored row far below
+    // the cursor — e.g. a tmux status bar on the last row of the tall PTY —
+    // is ignored so the scrollable area ends near the real end of input.
+    const getLastContentRow = () => {
+      const buffer = term.buffer.active;
+      const cursorRow = buffer.baseY + buffer.cursorY;
+      let lastRow = cursorRow;
+      let blankRun = 0;
+      for (let y = cursorRow + 1; y < buffer.length; y++) {
+        const line = buffer.getLine(y);
+        if (line && line.translateToString(true).trim()) {
+          lastRow = y;
+          blankRun = 0;
+        } else if (++blankRun >= CONTENT_GAP_CUTOFF_ROWS) {
+          break;
         }
       }
-
-      return lastContentRowIndex;
-    };
-
-    const getRenderedContentHeight = () => {
-      const lastContentRowIndex = getLastContentRowIndex();
-      const visibleRows = lastContentRowIndex >= 0 ? lastContentRowIndex + 2 : term.rows;
-      return visibleRows * getLineHeight();
+      return Math.min(term.rows - 1, Math.max(0, lastRow - buffer.viewportY));
     };
 
     scrollToLastContentRef.current = () => {
-      const lastContentRowIndex = getLastContentRowIndex();
-      if (lastContentRowIndex < 0) {
-        scrollToBottom();
-        return;
-      }
-
       scrollContainer.scrollTo({
-        top: Math.max(0, (lastContentRowIndex + 1) * getLineHeight() - scrollContainer.clientHeight),
+        top: Math.max(
+          0,
+          (getLastContentRow() + 1) * getLineHeight() - scrollContainer.clientHeight
+        ),
         behavior: "smooth",
       });
     };
@@ -136,30 +122,30 @@ export default React.memo(function TerminalInstance({
       );
     };
 
-    const syncLargeViewportHeight = () => {
-      const forceMaxHeight = FORCE_MAX_HEIGHT_COMMANDS.some((pattern) =>
-        pattern.test(command?.trim() ?? "")
-      );
-      const height = forceMaxHeight
-        ? MAX_TERMINAL_HEIGHT
-        : Math.min(
-            MAX_TERMINAL_HEIGHT,
-            Math.max(scrollContainer.clientHeight, getRenderedContentHeight())
-          );
+    const syncViewportHeight = () => {
+      const distanceFromBottom =
+        scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop;
+      const shouldPreserveBottom = distanceFromBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
+      const contentRows = Math.min(term.rows, getLastContentRow() + 1 + CONTENT_PADDING_ROWS);
+      const height = Math.max(scrollContainer.clientHeight, contentRows * getLineHeight());
       terminalMount.style.height = `${height}px`;
       scrollContent.style.height = `${height}px`;
-      const xtermScreen = terminalMount.querySelector<HTMLElement>(".xterm-screen");
-      const xtermRows = terminalMount.querySelector<HTMLElement>(".xterm-rows");
-      if (forceMaxHeight) {
-        if (xtermScreen) xtermScreen.style.setProperty("height", `${height}px`, "important");
-        if (xtermRows) xtermRows.style.setProperty("height", `${height}px`, "important");
-      } else {
-        xtermScreen?.style.removeProperty("height");
-        xtermRows?.style.removeProperty("height");
+      if (shouldPreserveBottom) {
+        requestAnimationFrame(() => {
+          scrollToBottom();
+          requestAnimationFrame(scrollToBottom);
+        });
       }
+    };
+
+    // Coalesce bursts of writes/resizes into one height sync per frame.
+    let syncQueued = false;
+    const scheduleSync = () => {
+      if (syncQueued) return;
+      syncQueued = true;
       requestAnimationFrame(() => {
-        scrollToBottom();
-        requestAnimationFrame(scrollToBottom);
+        syncQueued = false;
+        syncViewportHeight();
       });
     };
 
@@ -169,8 +155,8 @@ export default React.memo(function TerminalInstance({
       event.stopImmediatePropagation();
     };
 
-    const resizeObserver = new ResizeObserver(syncLargeViewportHeight);
-    const writeParsedDisposable = term.onWriteParsed(syncLargeViewportHeight);
+    const resizeObserver = new ResizeObserver(scheduleSync);
+    const writeParsedDisposable = term.onWriteParsed(scheduleSync);
 
     resizeObserver.observe(scrollContainer);
     scrollContainer.addEventListener("wheel", handleWheelCapture, {
@@ -178,7 +164,7 @@ export default React.memo(function TerminalInstance({
       passive: true,
     });
     term.attachCustomWheelEventHandler(() => false);
-    requestAnimationFrame(syncLargeViewportHeight);
+    scheduleSync();
     setTerminal(term);
 
     return () => {
