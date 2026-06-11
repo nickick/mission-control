@@ -1,13 +1,36 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, nativeImage } = require("electron");
 const { spawn } = require("node:child_process");
 const http = require("node:http");
 const path = require("node:path");
+const fs = require("node:fs");
 
 const WEB_URL = process.env.MISSION_CONTROL_WEB_URL ?? "http://127.0.0.1:3000";
 const SERVER_URL = process.env.MISSION_CONTROL_SERVER_URL ?? "http://127.0.0.1:3001/stats";
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://127.0.0.1:3001/pty";
 
 const childProcesses = [];
+
+app.setName("AI Mission Control");
+// Keep userData where it lived before the rename — setName would otherwise
+// point at a fresh directory and silently abandon the saved page config.
+app.setPath("userData", path.join(app.getPath("appData"), "@mission-control", "electron"));
+
+// Standalone launches run the production builds; set MISSION_CONTROL_DEV=1
+// (or just have dev servers already running) for the dev workflow.
+const DEV_MODE = process.env.MISSION_CONTROL_DEV === "1";
+
+// Relaunching from Spotlight while already running focuses the existing
+// window instead of starting a second instance.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+app.on("second-instance", () => {
+  const window = BrowserWindow.getAllWindows()[0];
+  if (window) {
+    if (window.isMinimized()) window.restore();
+    window.focus();
+  }
+});
 
 app.commandLine.appendSwitch("remote-debugging-port", "9222");
 
@@ -51,13 +74,31 @@ function waitForUrl(url, timeoutMs = 30000) {
   });
 }
 
+function urlIsUp(url, timeoutMs = 1200) {
+  return waitForUrl(url, timeoutMs).then(
+    () => true,
+    () => false
+  );
+}
+
 async function createWindow() {
-  spawnWorkspaceScript("@mission-control/server", "dev");
-  spawnWorkspaceScript("@mission-control/web", "dev", {
-    NEXT_PUBLIC_WS_URL: WS_URL,
-  });
+  // If the servers are already running (a previous instance, or manual
+  // `pnpm dev`), reuse them instead of spawning duplicates — a second
+  // `next dev` would silently pick a different port.
+  const [webUp, serverUp] = await Promise.all([urlIsUp(WEB_URL), urlIsUp(SERVER_URL)]);
+  if (!serverUp) spawnWorkspaceScript("@mission-control/server", DEV_MODE ? "dev" : "start");
+  if (!webUp) {
+    spawnWorkspaceScript("@mission-control/web", DEV_MODE ? "dev:app" : "start:app", {
+      NEXT_PUBLIC_WS_URL: WS_URL,
+    });
+  }
 
   await Promise.all([waitForUrl(WEB_URL), waitForUrl(SERVER_URL)]);
+
+  const iconPath = path.join(__dirname, "assets", "icon.png");
+  if (process.platform === "darwin" && app.dock && fs.existsSync(iconPath)) {
+    app.dock.setIcon(nativeImage.createFromPath(iconPath));
+  }
 
   const window = new BrowserWindow({
     width: 1600,
@@ -73,7 +114,6 @@ async function createWindow() {
   });
 
   await window.loadURL(WEB_URL);
-  window.webContents.openDevTools({ mode: "detach" });
 }
 
 function stopChildren() {

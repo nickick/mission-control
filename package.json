@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "dev": "node scripts/kill-ports.mjs && node scripts/with-env.mjs pnpm turbo dev --ui tui --env-mode loose",
-    "desktop": "pnpm --filter @mission-control/electron electron:dev",
+    "desktop": "node scripts/kill-ports.mjs && pnpm --filter @mission-control/electron electron:dev",
     "build": "turbo build",
     "typecheck": "turbo typecheck",
     "clean": "turbo clean",

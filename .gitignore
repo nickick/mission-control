@@ -28,3 +28,6 @@ tsconfig.tsbuildinfo
 # Misc
 coverage/
 .vercel
+
+# Production app build
+.next-prod/
