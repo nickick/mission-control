@@ -110,6 +110,7 @@ interface RemoteCpuSample {
   idle: number;
   total: number;
   time: number;
+  percent: number;
 }
 
 const remoteCpuCache = new Map<string, RemoteCpuSample>();
@@ -132,12 +133,14 @@ function parseRemoteCpu(statLine: string, host: string): number {
     // Only use if enough time has passed (at least 2s between polls)
     if (timeDiff > 2000 && totalDiff > 0) {
       const percent = Math.round(((totalDiff - idleDiff) / totalDiff) * 100);
-      remoteCpuCache.set(host, { idle, total, time: Date.now() });
+      remoteCpuCache.set(host, { idle, total, time: Date.now(), percent });
       return Math.min(100, Math.max(0, percent));
     }
+
+    return prev.percent;
   }
 
-  remoteCpuCache.set(host, { idle, total, time: Date.now() });
+  remoteCpuCache.set(host, { idle, total, time: Date.now(), percent: 0 });
   return 0; // First reading — will show 0 until next poll
 }
 
@@ -160,41 +163,51 @@ function execPromise(command: string, timeout: number): Promise<string> {
 export async function collectRemoteStats(host: string): Promise<SystemStats | null> {
   try {
     // Detect remote OS first
-    const unameOutput = await execPromise(
-      `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes ${host} 'uname -s'`,
-      5000
-    );
-    const isDarwin = unameOutput.trim() === "Darwin";
+    let isDarwin = false;
+    try {
+      const unameOutput = await execPromise(
+        `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes ${host} 'uname -s'`,
+        5000
+      );
+      isDarwin = unameOutput.trim() === "Darwin";
+    } catch {
+      // If uname fails, assume Linux and continue — the second SSH might still work
+    }
 
     let script: string;
     if (isDarwin) {
-      // macOS remote — use macOS-native commands
-      script = `
-echo "---LOAD---"
-sysctl -n vm.loadavg
-echo "---MEM---"
+      // macOS remote — do all parsing on the remote side so we get clean numbers back
+      script = `echo "---LOAD---"
+sysctl -n vm.loadavg | sed 's/[{}]//g' | awk '{print $1}'
+echo "---MEMTOTAL---"
 sysctl -n hw.memsize
-echo "---MEMVM---"
-vm_stat
+echo "---MEMUSED---"
+ps=$(sysctl -n hw.pagesize 2>/dev/null || getconf PAGESIZE 2>/dev/null || echo 4096)
+vm_stat | awk -v ps="$ps" '
+/Pages active/{gsub(/[^0-9]/,"",$3); a=$3}
+/Pages inactive/{gsub(/[^0-9]/,"",$3); i=$3}
+/Pages speculative/{gsub(/[^0-9]/,"",$3); s=$3}
+/Pages wired down/{gsub(/[^0-9]/,"",$4); w=$4}
+/Pages occupied by compressor/{gsub(/[^0-9]/,"",$5); c=$5}
+END{print (a+i+s+w+c)*ps}'
 echo "---DISK---"
 df -k / | tail -1 | awk '{print $2,$3}'
 echo "---CPU---"
-top -l 1 -n 0 | grep '^CPU usage'
-echo "---DONE---"
-`;
+top -l 1 -n 0 2>/dev/null | grep "CPU usage" | sed 's/%//g' | awk '{for(i=1;i<=NF;i++){if($i=="user")u=$(i-1); if($i=="sys")s=$(i-1)}} END{print int(u+s)}'
+echo "---DONE---"`;
     } else {
-      // Linux remote — /proc based
-      script = `
-echo "---LOAD---"
-cat /proc/loadavg
-echo "---MEM---"
-awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{print t,a}' /proc/meminfo
+      // Linux remote — do simple parsing on remote side; keep raw CPU line for delta
+      script = `echo "---LOAD---"
+awk '{print $1}' /proc/loadavg
+echo "---MEMTOTAL---"
+awk '/MemTotal/{print $2}' /proc/meminfo
+echo "---MEMUSED---"
+awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{print t-a}' /proc/meminfo
 echo "---DISK---"
 df -k / | tail -1 | awk '{print $2,$3}'
 echo "---CPU---"
 grep '^cpu ' /proc/stat
-echo "---DONE---"
-`;
+echo "---DONE---"`;
     }
 
     const output = await execPromise(
@@ -212,67 +225,34 @@ echo "---DONE---"
     const lines = output.split("\n");
     let section = "";
     for (const line of lines) {
-      if (line.startsWith("---LOAD---")) { section = "load"; continue; }
-      if (line.startsWith("---MEM---")) { section = "mem"; continue; }
-      if (line.startsWith("---MEMVM---")) { section = "memvm"; continue; }
-      if (line.startsWith("---DISK---")) { section = "disk"; continue; }
-      if (line.startsWith("---CPU---")) { section = "cpu"; continue; }
-      if (line.startsWith("---DONE---")) break;
+      const trimmed = line.trim();
+      if (trimmed.startsWith("---LOAD---")) { section = "load"; continue; }
+      if (trimmed.startsWith("---MEMTOTAL---")) { section = "memtotal"; continue; }
+      if (trimmed.startsWith("---MEMUSED---")) { section = "memused"; continue; }
+      if (trimmed.startsWith("---DISK---")) { section = "disk"; continue; }
+      if (trimmed.startsWith("---CPU---")) { section = "cpu"; continue; }
+      if (trimmed.startsWith("---DONE---")) break;
+      if (!trimmed) continue;
 
-      if (section === "load" && line.trim()) {
-        if (isDarwin) {
-          // { 1.23 0.89 0.75 }
-          const m = line.trim().match(/\{\s*([0-9.]+)/);
-          load1min = m ? parseFloat(m[1]) : 0;
-        } else {
-          const parts = line.trim().split(/\s+/);
-          load1min = parseFloat(parts[0] ?? "0");
-        }
-      }
-      if (section === "mem" && line.trim()) {
-        if (isDarwin) {
-          // hw.memsize in bytes
-          memTotal = parseInt(line.trim(), 10);
-        } else {
-          const parts = line.trim().split(/\s+/);
-          memTotal = parseInt(parts[0] ?? "0", 10) * 1024;
-          const memAvailable = parseInt(parts[1] ?? "0", 10) * 1024;
-          memUsed = memTotal - memAvailable;
-        }
-      }
-      if (section === "memvm" && isDarwin && line.trim()) {
-        // Parse vm_stat lines to accumulate used pages
-        const match = line.match(/Pages\s+(\w+):\s+(\d+)/);
-        if (match) {
-          const key = match[1];
-          const val = parseInt(match[2], 10);
-          // Count active, inactive, speculative, wired, compressor as "used"
-          if (["active", "inactive", "speculative", "wired down", "occupied by compressor"].includes(key)) {
-            memUsed += val * 4096; // assume 4KB pages
-          }
-        }
-      }
-      if (section === "disk" && line.trim()) {
-        const parts = line.trim().split(/\s+/);
-        diskTotal = parseInt(parts[0] ?? "0", 10) * 1024;
-        diskUsed = parseInt(parts[1] ?? "0", 10) * 1024;
-      }
-      if (section === "cpu" && line.trim()) {
-        if (isDarwin) {
-          // CPU usage: 7.5% user, 12.3% sys, 80.2% idle
-          const userMatch = line.match(/([0-9.]+)%\s+user/);
-          const sysMatch = line.match(/([0-9.]+)%\s+sys/);
-          const user = userMatch ? parseFloat(userMatch[1]) : 0;
-          const sys = sysMatch ? parseFloat(sysMatch[1]) : 0;
-          cpuStatLine = String(Math.round(user + sys));
-        } else {
-          cpuStatLine = line.trim();
-        }
+      if (section === "load") {
+        load1min = parseFloat(trimmed) || 0;
+      } else if (section === "memtotal") {
+        memTotal = parseInt(trimmed, 10) || 0;
+        if (!isDarwin) memTotal *= 1024; // Linux /proc/meminfo is in KB
+      } else if (section === "memused") {
+        memUsed = parseInt(trimmed, 10) || 0;
+        if (!isDarwin) memUsed *= 1024; // Linux /proc/meminfo is in KB
+      } else if (section === "disk") {
+        const parts = trimmed.split(/\s+/);
+        diskTotal = (parseInt(parts[0] ?? "0", 10) || 0) * 1024;
+        diskUsed = (parseInt(parts[1] ?? "0", 10) || 0) * 1024;
+      } else if (section === "cpu") {
+        cpuStatLine = trimmed;
       }
     }
 
     const cpuPercent = isDarwin
-      ? parseInt(cpuStatLine || "0", 10)
+      ? (parseInt(cpuStatLine, 10) || 0)
       : parseRemoteCpu(cpuStatLine, host);
 
     const memPercent = memTotal > 0 ? Math.round((memUsed / memTotal) * 100) : 0;
