@@ -13,11 +13,13 @@ export interface TerminalConfig {
 export interface PageConfig {
   id: string;
   name: string;
+  color?: string;
   terminals: TerminalConfig[];
 }
 
 export interface AppConfig {
   pages: PageConfig[];
+  repoRoots?: Record<string, string[]>;
   shortcuts: Record<string, string>;
 }
 

@@ -19,6 +19,7 @@ export function useTerminalSocket(
   options: UseTerminalSocketOptions
 ) {
   const wsRef = useRef<WebSocket | null>(null);
+  const pidRef = useRef<number | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const outputBufferRef = useRef<string[]>([]);
@@ -69,14 +70,17 @@ export function useTerminalSocket(
       if (disposed) return;
       try {
         const msg = JSON.parse(event.data) as WSMessage;
-        if (msg.type === "output") {
+        if (msg.type === "spawned") {
+          pidRef.current = msg.pid;
+        } else if (msg.type === "output") {
           terminal.write(msg.data);
           optionsRef.current.onData?.(msg.data);
-          // Buffer for summarization
+          // Buffer for summarization — keep enough scrollback for the model
+          // to infer what the session is actually about.
           outputBufferRef.current.push(msg.data);
           const total = outputBufferRef.current.join("");
-          if (total.length > 3000) {
-            outputBufferRef.current = [total.slice(-3000)];
+          if (total.length > 12000) {
+            outputBufferRef.current = [total.slice(-12000)];
           }
         }
       } catch {
@@ -192,5 +196,5 @@ export function useTerminalSocket(
     }
   }, []);
 
-  return { respawn, inject, outputBuffer: outputBufferRef };
+  return { respawn, inject, outputBuffer: outputBufferRef, pidRef };
 }

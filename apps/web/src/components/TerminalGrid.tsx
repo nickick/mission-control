@@ -52,6 +52,7 @@ const GridCell = React.memo(function GridCell({
       shell={terminal.shell}
       command={terminal.command}
       name={terminal.name}
+      statsHost={terminal.statsHost}
       focused={focused}
       onFocus={handleFocus}
       onRespawnRequest={handleRespawn}

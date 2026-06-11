@@ -2,7 +2,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import MissionControlLazy from "@/components/MissionControlLazy";
 
 export const metadata = {
-  title: "Mission Control",
+  title: "AI Mission Control",
 };
 
 export default function Home() {

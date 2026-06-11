@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Mission Control",
+  title: "AI Mission Control",
 };
 
 export default function RootLayout({

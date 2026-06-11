@@ -3,12 +3,19 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "portless",
+    "dev:app": "next dev",
     "build": "next build",
+    "build:app": "MISSION_CONTROL_PROD=1 next build",
     "start": "next start",
+    "start:app": "MISSION_CONTROL_PROD=1 next start",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf .next",
     "lint": "tsc --noEmit"
+  },
+  "portless": {
+    "name": "mission-control",
+    "script": "dev:app"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -16,6 +23,8 @@
     "@mission-control/types": "workspace:*",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "better-sqlite3": "^12.10.0",
+    "bullmq": "^5.78.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.14.0",
@@ -29,10 +38,12 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.5.0",
+    "portless": "^0.12.0",
     "postcss": "^8.5.13",
     "tailwindcss": "3",
     "typescript": "^5.6.0"

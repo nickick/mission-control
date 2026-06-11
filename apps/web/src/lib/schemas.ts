@@ -15,11 +15,13 @@ export const TerminalConfigSchema = z.object({
 export const PageConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
+  color: z.string().optional(),
   terminals: z.array(TerminalConfigSchema),
 });
 
 export const PersistedStateSchema = z.object({
   pages: z.array(PageConfigSchema),
+  repoRoots: z.record(z.string(), z.array(z.string())).optional(),
 });
 
 export type TerminalConfig = z.infer<typeof TerminalConfigSchema>;

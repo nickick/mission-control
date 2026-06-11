@@ -11,6 +11,7 @@ import CommandModal from "./CommandModal";
 import SetCommandModal from "./SetCommandModal";
 import RenameTabModal from "./RenameTabModal";
 import DeleteTabModal from "./DeleteTabModal";
+import RepoWorktreesDrawer from "./RepoWorktreesDrawer";
 
 export default function MissionControlClient() {
   const [mounted, setMounted] = useState(false);
@@ -21,6 +22,7 @@ export default function MissionControlClient() {
   const [renameModalOpen, setRenameModalOpen] = useState(false);
   const [renameTabIndex, setRenameTabIndex] = useState(0);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [reposOpen, setReposOpen] = useState(false);
   const [deleteTabIndex, setDeleteTabIndex] = useState(0);
   const actionsRef = useRef<Map<string, Map<number, { respawn: () => void; inject: (cmd: string) => void }>>>(new Map());
   const dynamicIdCounter = useRef(0);
@@ -34,6 +36,7 @@ export default function MissionControlClient() {
   const setTerminalCommand = useConfigStore((s) => s.setTerminalCommand);
   const setTerminalStatsHost = useConfigStore((s) => s.setTerminalStatsHost);
   const setPageName = useConfigStore((s) => s.setPageName);
+  const setPageColor = useConfigStore((s) => s.setPageColor);
 
   const pageConfig = pages[activePage] ?? pages[0];
   const terminals = pageConfig?.terminals ?? [];
@@ -91,6 +94,14 @@ export default function MissionControlClient() {
     if (!hasTerminals) return;
     actionsRef.current.get(pageConfig.id)?.get(focusedIndex)?.respawn?.();
   }, [focusedIndex, hasTerminals, pageConfig.id]);
+
+  const handleRefreshAll = useCallback(() => {
+    for (const pageActions of actionsRef.current.values()) {
+      for (const actions of pageActions.values()) {
+        actions.respawn?.();
+      }
+    }
+  }, []);
 
   const handleNewTab = useCallback(() => {
     setModalOpen(true);
@@ -153,14 +164,15 @@ export default function MissionControlClient() {
   }, [pages.length, addPage]);
 
   const handleRenameSubmit = useCallback(
-    (name: string) => {
+    (name: string, color?: string) => {
       const page = pages[renameTabIndex];
       if (page) {
         setPageName(page.id, name);
+        setPageColor(page.id, color);
       }
       setRenameModalOpen(false);
     },
-    [pages, renameTabIndex, setPageName]
+    [pages, renameTabIndex, setPageName, setPageColor]
   );
 
   const handleModalSubmit = useCallback(
@@ -236,6 +248,8 @@ export default function MissionControlClient() {
         onDelete={handleDeleteTab}
         onReorder={handleReorder}
         onAddPage={handleAddPage}
+        onRefreshAll={handleRefreshAll}
+        onOpenRepos={() => setReposOpen(true)}
       />
       <div className="flex-1 overflow-hidden relative">
         {pages.map((page, pageIdx) => {
@@ -246,7 +260,10 @@ export default function MissionControlClient() {
             <div
               key={page.id}
               className="absolute inset-0"
-              style={{ display: isActive ? "block" : "none" }}
+              style={{
+                display: isActive ? "block" : "none",
+                ...(page.color ? ({ "--page-tint": page.color } as React.CSSProperties) : {}),
+              }}
             >
               {hasPageTerminals ? (
                 <TerminalGrid
@@ -287,7 +304,7 @@ export default function MissionControlClient() {
         onNewPage={handleAddPage}
         onRefresh={handleRefresh}
         onSetCommand={handleSetCommand}
-        modalOpen={modalOpen || setCommandModalOpen || renameModalOpen || deleteModalOpen}
+        modalOpen={modalOpen || setCommandModalOpen || renameModalOpen || deleteModalOpen || reposOpen}
       />
       <CommandModal
         open={modalOpen}
@@ -307,6 +324,7 @@ export default function MissionControlClient() {
       <RenameTabModal
         open={renameModalOpen}
         currentName={pages[renameTabIndex]?.name ?? ""}
+        currentColor={pages[renameTabIndex]?.color}
         onSubmit={handleRenameSubmit}
         onClose={() => setRenameModalOpen(false)}
       />
@@ -316,6 +334,7 @@ export default function MissionControlClient() {
         onConfirm={handleDeleteConfirm}
         onClose={() => setDeleteModalOpen(false)}
       />
+      <RepoWorktreesDrawer open={reposOpen} onClose={() => setReposOpen(false)} />
     </div>
   );
 }

@@ -17,6 +17,7 @@ interface TerminalInstanceProps {
   shell: string;
   command?: string;
   name: string;
+  statsHost?: string;
   focused: boolean;
   onFocus: () => void;
   onRespawnRequest: (respawn: () => void) => void;
@@ -28,6 +29,7 @@ export default React.memo(function TerminalInstance({
   shell,
   command,
   name,
+  statsHost,
   focused,
   onFocus,
   onRespawnRequest,
@@ -37,7 +39,10 @@ export default React.memo(function TerminalInstance({
   const scrollContentRef = useRef<HTMLDivElement>(null);
   const terminalMountRef = useRef<HTMLDivElement>(null);
   const scrollToLastContentRef = useRef<() => void>(() => {});
+  const scrollToBottomRef = useRef<() => void>(() => {});
   const [terminal, setTerminal] = useState<Terminal | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [summaryHovered, setSummaryHovered] = useState(false);
 
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
@@ -121,15 +126,24 @@ export default React.memo(function TerminalInstance({
         scrollContainer.scrollHeight - scrollContainer.clientHeight
       );
     };
+    scrollToBottomRef.current = scrollToBottom;
 
     const syncViewportHeight = () => {
       const distanceFromBottom =
         scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop;
       const shouldPreserveBottom = distanceFromBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD;
       const contentRows = Math.min(term.rows, getLastContentRow() + 1 + CONTENT_PADDING_ROWS);
-      const height = Math.max(scrollContainer.clientHeight, contentRows * getLineHeight());
+      const lineHeight = getLineHeight();
+      const height = Math.max(scrollContainer.clientHeight, contentRows * lineHeight);
       terminalMount.style.height = `${height}px`;
       scrollContent.style.height = `${height}px`;
+      // Highlight the scroll pill only when there is real scrollback —
+      // with just a row or two of overflow the pill spans the whole track
+      // and a bright border would read as a full-height edge line.
+      scrollContainer.classList.toggle(
+        "has-scrollback",
+        height - scrollContainer.clientHeight > 3 * lineHeight
+      );
       if (shouldPreserveBottom) {
         requestAnimationFrame(() => {
           scrollToBottom();
@@ -173,17 +187,44 @@ export default React.memo(function TerminalInstance({
       writeParsedDisposable.dispose();
       term.dispose();
       scrollToLastContentRef.current = () => {};
+      scrollToBottomRef.current = () => {};
       setTerminal(null);
     };
   }, []);
 
-  const { respawn, inject, outputBuffer } = useTerminalSocket(terminal, {
+  // Close the context menu on any outside interaction.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [contextMenu]);
+
+  const { respawn, inject, outputBuffer, pidRef } = useTerminalSocket(terminal, {
     sessionId,
     shell,
     command,
   });
 
-  const summary = useSessionSummary(outputBuffer);
+  // Remote sessions: the local shell pid's cwd is just where ssh was
+  // launched, so directory tracking falls back to the terminal buffer.
+  const remote = Boolean(statsHost) || /\b(ssh|ssvta|mosh)\b/.test(command ?? "");
+  const { summary, tooltip, requestSummaryNow } = useSessionSummary(
+    outputBuffer,
+    sessionId,
+    pidRef,
+    remote,
+    { name, command }
+  );
 
   useEffect(() => {
     onRespawnRequest(respawn);
@@ -206,13 +247,43 @@ export default React.memo(function TerminalInstance({
         onFocus();
         terminal?.focus();
       }}
+      onContextMenuCapture={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onFocus();
+        setContextMenu({
+          x: Math.min(event.clientX, window.innerWidth - 200),
+          y: Math.min(event.clientY, window.innerHeight - 130),
+        });
+      }}
     >
       <div className="terminal-header">
         <div className="flex items-center justify-between">
           <span className="name">{name}</span>
           <span>{focused ? "●" : ""}</span>
         </div>
-        <div className="summary-text" title={summary}>{summary}</div>
+        <div className="flex items-start gap-1">
+          <div
+            className="summary-hover flex-1 min-w-0"
+            onMouseEnter={() => setSummaryHovered(true)}
+            onMouseLeave={() => setSummaryHovered(false)}
+          >
+            <div className="summary-text">{summary}</div>
+            {summaryHovered && <div className="summary-tooltip">{tooltip}</div>}
+          </div>
+          <button
+            type="button"
+            className="summary-refresh"
+            title="Summarize now (jumps the queue)"
+            aria-label="Summarize this terminal now"
+            onClick={(event) => {
+              event.stopPropagation();
+              requestSummaryNow();
+            }}
+          >
+            <Icon icon="mdi:creation" width={12} height={12} aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <div ref={scrollContainerRef} className="terminal-body">
         <div ref={scrollContentRef} className="terminal-scroll-content">
@@ -232,6 +303,44 @@ export default React.memo(function TerminalInstance({
           <Icon icon="mdi:eye" width={15} height={15} aria-hidden="true" />
         </button>
       </div>
+      {contextMenu && (
+        <div
+          className="terminal-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              scrollToBottomRef.current();
+              setContextMenu(null);
+            }}
+          >
+            <Icon icon="mdi:arrow-collapse-down" width={13} height={13} aria-hidden="true" />
+            Scroll to bottom
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              scrollToLastContentRef.current();
+              setContextMenu(null);
+            }}
+          >
+            <Icon icon="mdi:eye" width={13} height={13} aria-hidden="true" />
+            Scroll to last output
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              requestSummaryNow();
+              setContextMenu(null);
+            }}
+          >
+            <Icon icon="mdi:creation" width={13} height={13} aria-hidden="true" />
+            Summarize now
+          </button>
+        </div>
+      )}
     </div>
   );
 });

@@ -17,8 +17,13 @@ html, body, #__next {
 }
 
 .terminal-cell {
-  border: 1px solid #333;
-  background: #1e1e1e;
+  /* Per-page tint: --page-tint is set on the page container when the tab
+     has a color; without it everything resolves to the plain defaults.
+     The tint runs through the whole terminal chrome (background, borders,
+     focus ring, scrollbar) so it's obvious which tab you're typing into
+     even when staring at the bottom of a scrolled terminal. */
+  border: 1px solid color-mix(in srgb, #333 45%, var(--page-tint, #333));
+  background: color-mix(in srgb, #1e1e1e 90%, var(--page-tint, #1e1e1e));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -27,12 +32,17 @@ html, body, #__next {
 }
 
 .terminal-cell.focused {
-  border-color: #4fc1ff;
-  box-shadow: inset 0 0 0 1px #4fc1ff;
+  border-color: var(--page-tint, #4fc1ff);
+}
+
+/* Dim unfocused terminals so the one with the cursor stands out. */
+.terminal-cell:not(.focused) {
+  filter: brightness(0.78);
 }
 
 .terminal-header {
-  background: #252526;
+  position: relative;
+  background: color-mix(in srgb, #252526 88%, var(--page-tint, #252526));
   padding: 4px 8px;
   font-size: 11px;
   color: #858585;
@@ -41,6 +51,28 @@ html, body, #__next {
   flex-direction: column;
   gap: 2px;
   flex-shrink: 0;
+}
+
+/* Instant rich tooltip for the session summary — the native title
+   attribute has an OS-imposed hover delay. Mounted only while hovered
+   (React state), so no display toggling here. */
+.summary-tooltip {
+  position: absolute;
+  top: 100%;
+  left: 8px;
+  right: 8px;
+  z-index: 100;
+  padding: 8px 10px;
+  background: #252526;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  font-size: 11px;
+  line-height: 1.45;
+  color: #cccccc;
+  white-space: pre-line;
+  max-height: 45vh;
+  overflow-y: auto;
 }
 
 .terminal-header .name {
@@ -52,12 +84,57 @@ html, body, #__next {
   font-size: 10px;
   color: #6e9faf;
   line-height: 1.3;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-height: 3.9em;
+  height: 2.9em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a transparent;
+}
+
+.terminal-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  padding: 4px;
+  background: #252526;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.terminal-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 10px;
+  text-align: left;
+  font-size: 12px;
+  color: #cccccc;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.terminal-context-menu button:hover {
+  background: #2d2d2d;
+  color: #ffffff;
+}
+
+.summary-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  padding: 1px;
+  border-radius: 4px;
+  color: #5a5a5a;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.summary-refresh:hover {
+  color: #4fc1ff;
+  background: #2d2d2d;
 }
 
 .terminal-body {
@@ -96,11 +173,16 @@ html, body, #__next {
 
 .terminal-body::-webkit-scrollbar-thumb {
   background: #0c0c0c;
-  border: 1px solid #4fc1ff;
+  border: 1px solid #2f2f2f;
   border-radius: 4px;
 }
 
-.terminal-body::-webkit-scrollbar-thumb:hover {
+/* Blue pill only when there is meaningful scrollback to navigate. */
+.terminal-body.has-scrollback::-webkit-scrollbar-thumb {
+  border-color: #4fc1ff;
+}
+
+.terminal-body.has-scrollback::-webkit-scrollbar-thumb:hover {
   border-color: #9cdcfe;
 }
 
@@ -170,11 +252,6 @@ html, body, #__next {
 
 .xterm-screen {
   z-index: 1;
-}
-
-/* Next.js dev indicator — dim the "N" badge */
-nextjs-portal {
-  opacity: 0.2 !important;
 }
 
 /* xterm.js positions the helper textarea at the cursor location.

@@ -6,7 +6,9 @@ import { extractSshHost } from "@/hooks/useSystemStats";
 
 interface ConfigStore {
   pages: PageConfig[];
+  repoRoots: Record<string, string[]>;
   setPages: (pages: PageConfig[]) => void;
+  setRepoRoots: (source: string, roots: string[]) => void;
   addPage: (page: PageConfig) => void;
   removePage: (pageId: string) => void;
   reorderPages: (fromIndex: number, toIndex: number) => void;
@@ -16,6 +18,7 @@ interface ConfigStore {
   setTerminalCommand: (pageId: string, terminalId: string, command?: string) => void;
   setTerminalStatsHost: (pageId: string, terminalId: string, statsHost?: string) => void;
   setPageName: (pageId: string, name: string) => void;
+  setPageColor: (pageId: string, color?: string) => void;
 }
 
 const STORAGE_KEY = "mission-control:config";
@@ -61,12 +64,43 @@ function migrateAndValidate(raw: unknown): PageConfig[] {
   return config.pages;
 }
 
+function migrateRepoRoots(raw: unknown): Record<string, string[]> {
+  const parsed = PersistedStateSchema.safeParse(raw);
+  if (parsed.success) {
+    return parsed.data.repoRoots ?? {};
+  }
+
+  if (raw && typeof raw === "object" && "repoRoots" in raw) {
+    const repoRoots = (raw as { repoRoots?: unknown }).repoRoots;
+    if (repoRoots && typeof repoRoots === "object" && !Array.isArray(repoRoots)) {
+      const migrated: Record<string, string[]> = {};
+      for (const [source, roots] of Object.entries(repoRoots)) {
+        if (Array.isArray(roots)) {
+          migrated[source] = roots.filter((root): root is string => typeof root === "string");
+        }
+      }
+      return migrated;
+    }
+  }
+
+  return {};
+}
+
 export const useConfigStore = create<ConfigStore>()(
   persist(
     (set) => ({
       pages: config.pages,
+      repoRoots: {},
 
       setPages: (pages) => set({ pages }),
+
+      setRepoRoots: (source, roots) =>
+        set((state) => ({
+          repoRoots: {
+            ...state.repoRoots,
+            [source]: roots.map((root) => root.trim()).filter(Boolean),
+          },
+        })),
 
       addPage: (page) =>
         set((state) => ({
@@ -145,6 +179,13 @@ export const useConfigStore = create<ConfigStore>()(
           ),
         })),
 
+      setPageColor: (pageId, color) =>
+        set((state) => ({
+          pages: state.pages.map((page) =>
+            page.id === pageId ? { ...page, color } : page
+          ),
+        })),
+
       reorderPages: (fromIndex, toIndex) =>
         set((state) => {
           if (
@@ -165,12 +206,16 @@ export const useConfigStore = create<ConfigStore>()(
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ pages: state.pages }),
+      partialize: (state) => ({ pages: state.pages, repoRoots: state.repoRoots }),
       skipHydration: true,
       onRehydrateStorage: () => (state) => {
         if (state) {
           const validPages = migrateAndValidate({ pages: state.pages });
+          const repoRoots = migrateRepoRoots({ pages: state.pages, repoRoots: state.repoRoots });
           state.setPages(validPages);
+          for (const [source, roots] of Object.entries(repoRoots)) {
+            state.setRepoRoots(source, roots);
+          }
         }
       },
     }
