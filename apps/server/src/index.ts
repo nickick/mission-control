@@ -6,6 +6,13 @@ import { collectStats, collectRemoteStats } from "./stats.js";
 import { collectGitRepos } from "./gitRepos.js";
 import { getAuthToken, isAuthorized, TOKEN_FILE } from "./auth.js";
 import { listTmuxSessions, peekTmuxSession, sendToTmuxSession } from "./tmux.js";
+import {
+  chat as openclawChat,
+  chatStream as openclawChatStream,
+  listAgents,
+  openclawConfigured,
+  DEFAULT_AGENT,
+} from "./openclaw.js";
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
 
@@ -96,6 +103,90 @@ app.post("/tmux/send", async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// OpenClaw chat: the primary channel for the mobile client. Proxies to the
+// local gateway so the gateway token stays server-side.
+app.get("/openclaw/agents", async (_req, res) => {
+  if (!openclawConfigured()) {
+    res.json({ configured: false, agents: [], defaultAgent: DEFAULT_AGENT });
+    return;
+  }
+  try {
+    res.json({ configured: true, agents: await listAgents(), defaultAgent: DEFAULT_AGENT });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post("/openclaw/chat", async (req, res) => {
+  if (!openclawConfigured()) {
+    res.status(503).json({ error: "OpenClaw gateway not configured on this server" });
+    return;
+  }
+  const { messages, agent, sessionKey } = (req.body ?? {}) as {
+    messages?: { role: "system" | "user" | "assistant"; content: string }[];
+    agent?: string;
+    sessionKey?: string;
+  };
+  if (!Array.isArray(messages) || messages.length === 0) {
+    res.status(400).json({ error: "messages are required" });
+    return;
+  }
+  try {
+    res.json(await openclawChat(messages, agent || DEFAULT_AGENT, sessionKey));
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Streaming chat: pipe the gateway's SSE straight through to the client.
+app.post("/openclaw/chat/stream", async (req, res) => {
+  if (!openclawConfigured()) {
+    res.status(503).json({ error: "OpenClaw gateway not configured on this server" });
+    return;
+  }
+  const { messages, agent, sessionKey } = (req.body ?? {}) as {
+    messages?: { role: "system" | "user" | "assistant"; content: string }[];
+    agent?: string;
+    sessionKey?: string;
+  };
+  if (!Array.isArray(messages) || messages.length === 0) {
+    res.status(400).json({ error: "messages are required" });
+    return;
+  }
+
+  let gw: Response;
+  try {
+    gw = await openclawChatStream(messages, agent || DEFAULT_AGENT, sessionKey);
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    return;
+  }
+  if (!gw.ok || !gw.body) {
+    const body = await gw.text().catch(() => "");
+    res.status(502).json({ error: `gateway ${gw.status}: ${body.slice(0, 300)}` });
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const reader = gw.body.getReader();
+  req.on("close", () => void reader.cancel().catch(() => {}));
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+  } catch {
+    // client disconnected or gateway stream broke; just end.
+  } finally {
+    res.end();
   }
 });
 
