@@ -17,9 +17,10 @@ interface SettingsScreenProps {
 }
 
 export default function SettingsScreen({ config, onSave, onClose }: SettingsScreenProps) {
-  const [serverUrl, setServerUrl] = useState(config.serverUrl);
+  const [gatewayUrl, setGatewayUrl] = useState(config.gatewayUrl);
+  const [sinkUrl, setSinkUrl] = useState(config.sinkUrl);
   const [token, setToken] = useState(config.token);
-  const [agentSession, setAgentSession] = useState(config.agentSession);
+  const [agent, setAgent] = useState(config.agent);
 
   return (
     <KeyboardAvoidingView
@@ -28,36 +29,48 @@ export default function SettingsScreen({ config, onSave, onClose }: SettingsScre
     >
       <Text style={styles.title}>Settings</Text>
 
-      <Text style={styles.label}>Server URL (tailnet)</Text>
+      <Text style={styles.label}>Gateway URL (chat)</Text>
       <TextInput
         style={styles.input}
-        value={serverUrl}
-        onChangeText={setServerUrl}
-        placeholder="http://100.114.107.124:3001"
+        value={gatewayUrl}
+        onChangeText={setGatewayUrl}
+        placeholder="https://vps-1a5874b1.tailed2d0f.ts.net:8443"
         placeholderTextColor="#555"
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="url"
       />
 
-      <Text style={styles.label}>Bearer token</Text>
+      <Text style={styles.label}>Sink URL (tool stream)</Text>
+      <TextInput
+        style={styles.input}
+        value={sinkUrl}
+        onChangeText={setSinkUrl}
+        placeholder="https://vps-1a5874b1.tailed2d0f.ts.net:9443"
+        placeholderTextColor="#555"
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+      />
+
+      <Text style={styles.label}>Gateway token</Text>
       <TextInput
         style={styles.input}
         value={token}
         onChangeText={setToken}
-        placeholder="contents of ~/.mission-control/server-token"
+        placeholder="GATEWAY_TOKEN"
         placeholderTextColor="#555"
         autoCapitalize="none"
         autoCorrect={false}
         secureTextEntry
       />
 
-      <Text style={styles.label}>Agent tmux session</Text>
+      <Text style={styles.label}>OpenClaw agent</Text>
       <TextInput
         style={styles.input}
-        value={agentSession}
-        onChangeText={setAgentSession}
-        placeholder="molt-0"
+        value={agent}
+        onChangeText={setAgent}
+        placeholder="openclaw/chief-of-staff"
         placeholderTextColor="#555"
         autoCapitalize="none"
         autoCorrect={false}
@@ -69,7 +82,7 @@ export default function SettingsScreen({ config, onSave, onClose }: SettingsScre
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.button}
-          onPress={() => onSave({ serverUrl, token, agentSession })}
+          onPress={() => onSave({ gatewayUrl, sinkUrl, token, agent })}
         >
           <Text style={styles.buttonText}>Save</Text>
         </TouchableOpacity>
