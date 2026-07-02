@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Animated, Dimensions, FlatList, Pressable, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import type { AppConfig } from "./config";
-import { getGateway, listSessions, type GatewaySessionInfo } from "./gateway/useGateway";
+import { getLocalSessions, removeLocalSession, type LocalSession } from "./gateway/localSessions";
 
 interface SessionDrawerProps {
-  config: AppConfig;
   visible: boolean;
   activeKey: string;
+  reloadKey: number;
   onClose: () => void;
   onSelect: (key: string, agentId?: string) => void;
   onNew: () => void;
@@ -14,8 +13,8 @@ interface SessionDrawerProps {
 
 const PANEL_WIDTH = Math.min(Dimensions.get("window").width * 0.78, 320);
 
-export default function SessionDrawer({ config, visible, activeKey, onClose, onSelect, onNew }: SessionDrawerProps) {
-  const [sessions, setSessions] = useState<GatewaySessionInfo[]>([]);
+export default function SessionDrawer({ visible, activeKey, reloadKey, onClose, onSelect, onNew }: SessionDrawerProps) {
+  const [sessions, setSessions] = useState<LocalSession[]>([]);
   const [rendered, setRendered] = useState(visible);
   const slide = useRef(new Animated.Value(visible ? 0 : -PANEL_WIDTH)).current;
   const fade = useRef(new Animated.Value(visible ? 1 : 0)).current;
@@ -23,15 +22,7 @@ export default function SessionDrawer({ config, visible, activeKey, onClose, onS
   useEffect(() => {
     if (visible) {
       setRendered(true);
-      void (async () => {
-        try {
-          const c = getGateway(config);
-          await c.whenReady();
-          setSessions(await listSessions(c));
-        } catch {
-          setSessions([]);
-        }
-      })();
+      void getLocalSessions().then(setSessions);
       Animated.parallel([
         Animated.timing(slide, { toValue: 0, duration: 220, useNativeDriver: true }),
         Animated.timing(fade, { toValue: 1, duration: 220, useNativeDriver: true }),
@@ -42,11 +33,9 @@ export default function SessionDrawer({ config, visible, activeKey, onClose, onS
         Animated.timing(fade, { toValue: 0, duration: 200, useNativeDriver: true }),
       ]).start(({ finished }) => finished && setRendered(false));
     }
-  }, [visible, config, slide, fade]);
+  }, [visible, reloadKey, slide, fade]);
 
   if (!rendered) return null;
-
-  const labelFor = (s: GatewaySessionInfo) => s.label || s.key.split(":").pop() || s.key;
 
   return (
     <View style={styles.overlay}>
@@ -68,10 +57,21 @@ export default function SessionDrawer({ config, visible, activeKey, onClose, onS
               style={[styles.row, item.key === activeKey && styles.rowActive]}
               onPress={() => onSelect(item.key, item.agentId)}
             >
-              <Text style={styles.rowTitle} numberOfLines={1}>
-                {labelFor(item)}
-              </Text>
-              {item.agentId ? <Text style={styles.rowAgent}>{item.agentId}</Text> : null}
+              <View style={styles.rowMain}>
+                <Text style={styles.rowTitle} numberOfLines={1}>
+                  {item.label}
+                </Text>
+                <Text style={styles.rowAgent}>{item.agentId}</Text>
+              </View>
+              <TouchableOpacity
+                hitSlop={10}
+                onPress={async () => {
+                  await removeLocalSession(item.key);
+                  setSessions((prev) => prev.filter((s) => s.key !== item.key));
+                }}
+              >
+                <Text style={styles.delete}>✕</Text>
+              </TouchableOpacity>
             </TouchableOpacity>
           )}
         />
@@ -100,8 +100,10 @@ const styles = StyleSheet.create({
   newButtonText: { color: "#000", fontWeight: "700" },
   list: { flex: 1 },
   empty: { color: "#555", fontSize: 13, marginTop: 10 },
-  row: { paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8 },
+  row: { flexDirection: "row", alignItems: "center", paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, gap: 8 },
   rowActive: { backgroundColor: "#1e1e1e" },
+  rowMain: { flex: 1 },
   rowTitle: { color: "#cccccc", fontSize: 14 },
   rowAgent: { color: "#6e9faf", fontSize: 11, marginTop: 2 },
+  delete: { color: "#555", fontSize: 14, paddingHorizontal: 4 },
 });

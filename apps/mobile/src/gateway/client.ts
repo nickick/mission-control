@@ -53,15 +53,27 @@ export class GatewayClient {
   private deviceToken: string | null = null;
   private backoffMs = 1000;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private challengeTimer: ReturnType<typeof setTimeout> | null = null;
   private readyResolvers: Array<() => void> = [];
+  private failedAttempts = 0;
+  private awaitingPairing = false;
 
   constructor(private opts: GatewayClientOptions) {}
 
   async start() {
     this.closed = false;
-    if (!this.identity) this.identity = await loadOrCreateIdentity();
-    if (this.deviceToken === null) {
-      this.deviceToken = (await SecureStore.getItemAsync(DEVICE_TOKEN_KEY)) ?? "";
+    try {
+      if (!this.identity) this.identity = await loadOrCreateIdentity();
+      if (this.deviceToken === null) {
+        this.deviceToken = (await SecureStore.getItemAsync(DEVICE_TOKEN_KEY)) ?? "";
+      }
+    } catch (err) {
+      // Crypto/keychain failure — surface it instead of hanging on "connecting".
+      this.setStatus({
+        state: "error",
+        message: `Identity setup failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
     }
     this.connect();
   }
@@ -69,6 +81,7 @@ export class GatewayClient {
   stop() {
     this.closed = true;
     this.clearReconnect();
+    this.clearChallengeTimer();
     this.ws?.close();
     this.ws = null;
   }
@@ -89,10 +102,21 @@ export class GatewayClient {
 
   private connect() {
     this.connectSent = false;
-    this.setStatus({ state: "connecting" });
+    // While awaiting pairing approval we keep polling silently — don't flip the
+    // UI back to "connecting" (that caused a pairing⇄connecting flicker).
+    if (!this.awaitingPairing) this.setStatus({ state: "connecting" });
     let ws: WebSocket;
     try {
-      ws = new WebSocket(this.opts.url);
+      // React Native auto-injects an Origin header, which the gateway treats
+      // as a browser/Control-UI connection and rejects (its origin allowlist
+      // is empty). An empty Origin is accepted as "no origin", so the gateway
+      // takes the normal device-auth path. The 3rd options arg is RN-only.
+      const RNWebSocket = WebSocket as unknown as new (
+        url: string,
+        protocols: string[] | undefined,
+        options: { headers: Record<string, string> }
+      ) => WebSocket;
+      ws = new RNWebSocket(this.opts.url, undefined, { headers: { origin: "" } });
     } catch (err) {
       this.setStatus({ state: "error", message: String(err) });
       this.scheduleReconnect();
@@ -103,17 +127,53 @@ export class GatewayClient {
     ws.onerror = () => {
       /* close will follow */
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       if (this.ws !== ws) return;
       this.ws = null;
+      const wasConnected = this.connected;
       this.connected = false;
+      this.clearChallengeTimer();
       this.flushPending(new Error("gateway connection closed"));
-      if (!this.closed) this.scheduleReconnect();
+      if (this.closed) return;
+      // A NOT_PAIRED rejection closes the socket; that's expected while we poll
+      // for approval, so don't treat it as a reachability failure.
+      if (this.awaitingPairing) {
+        this.scheduleReconnect(5000);
+        return;
+      }
+      // Surface a real error once the first attempts fail, so the user isn't
+      // stuck on a perpetual "connecting" spinner (common cause: phone not on
+      // the tailnet so the gateway host is unreachable).
+      if (!wasConnected) {
+        this.failedAttempts += 1;
+        if (this.failedAttempts >= 2) {
+          const reason = (ev as CloseEvent)?.reason;
+          this.setStatus({
+            state: "error",
+            message: reason
+              ? `Can't reach gateway: ${reason}`
+              : "Can't reach the gateway. Is Tailscale on and the gateway URL correct?",
+          });
+        }
+      }
+      this.scheduleReconnect();
     };
-    // Some gateways send connect.challenge first; if not, send connect on open.
+    // The gateway sends connect.challenge with a nonce; sign against it. Only
+    // fall back to a nonce-less connect if no challenge arrives shortly (for
+    // gateways that don't challenge).
     ws.onopen = () => {
-      if (!this.connectSent) void this.sendConnect("");
+      this.clearChallengeTimer();
+      this.challengeTimer = setTimeout(() => {
+        if (!this.connectSent) void this.sendConnect("");
+      }, 800);
     };
+  }
+
+  private clearChallengeTimer() {
+    if (this.challengeTimer) {
+      clearTimeout(this.challengeTimer);
+      this.challengeTimer = null;
+    }
   }
 
   private async sendConnect(nonce: string) {
@@ -157,19 +217,23 @@ export class GatewayClient {
       }
       this.connected = true;
       this.backoffMs = 1000;
+      this.failedAttempts = 0;
+      this.awaitingPairing = false;
       this.setStatus({ state: "connected" });
       this.readyResolvers.forEach((r) => r());
       this.readyResolvers = [];
     } catch (err) {
       const e = err as { code?: string; details?: { requestId?: string } };
       if (e?.code === "NOT_PAIRED" || e?.details?.requestId) {
+        this.awaitingPairing = true;
         this.setStatus({
           state: "pairing",
           requestId: e.details?.requestId ?? "",
           deviceId: this.identity.deviceId,
         });
-        // Poll until the owner approves the device, then this reconnect succeeds.
-        this.scheduleReconnect(5000);
+        // Close now and poll; the onclose handler reconnects every 5s until the
+        // owner approves, at which point the reconnect succeeds.
+        this.ws?.close();
       } else {
         this.setStatus({ state: "error", message: (err as Error)?.message ?? "connect failed" });
         this.scheduleReconnect();
@@ -210,6 +274,7 @@ export class GatewayClient {
     if (frame.type === "event") {
       if (frame.event === "connect.challenge") {
         const nonce = (frame.payload as { nonce?: string } | undefined)?.nonce ?? "";
+        this.clearChallengeTimer();
         if (!this.connectSent) void this.sendConnect(nonce);
         return;
       }

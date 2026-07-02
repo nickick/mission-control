@@ -261,7 +261,11 @@ export default function MissionControlClient() {
               key={page.id}
               className="absolute inset-0"
               style={{
-                display: isActive ? "block" : "none",
+                // visibility (not display) keeps hidden pages laid out at full
+                // size, so every terminal fits its columns and syncs heights
+                // at load instead of on first tab visit.
+                visibility: isActive ? "visible" : "hidden",
+                pointerEvents: isActive ? "auto" : "none",
                 ...(page.color ? ({ "--page-tint": page.color } as React.CSSProperties) : {}),
               }}
             >
@@ -269,7 +273,7 @@ export default function MissionControlClient() {
                 <TerminalGrid
                   pageId={page.id}
                   terminals={pageTerminals}
-                  focusedIndex={isActive ? focusedIndex : 0}
+                  focusedIndex={isActive ? focusedIndex : -1}
                   onFocusIndex={isActive ? setFocusedIndex : () => {}}
                   onRegisterActions={handleRegisterActions}
                   onAddTerminal={handleNewTab}

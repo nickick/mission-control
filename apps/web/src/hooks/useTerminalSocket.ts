@@ -117,8 +117,9 @@ export function useTerminalSocket(
 
     const resize = () => {
       try {
-        // Don't fit if the terminal is in a hidden page (display: none).
-        // offsetParent is null when the element or an ancestor is hidden.
+        // Inactive pages are visibility:hidden (still laid out), so fitting
+        // works there too. offsetParent is only null before first layout or
+        // under display:none — skip those, dimensions would be garbage.
         if (!terminal.element || terminal.element.offsetParent === null) return;
 
         // Fit cols to the container width only. Rows stay at the tall fixed
@@ -147,8 +148,8 @@ export function useTerminalSocket(
     setTimeout(resize, 50);
     window.addEventListener("resize", resize);
 
-    // ResizeObserver catches element size changes including becoming visible
-    // after display:none → display:block (page tab switches within the app).
+    // ResizeObserver catches element size changes (window resizes, column
+    // layout shifts) — hidden pages stay laid out, so these fire there too.
     const resizeObserver = new ResizeObserver(() => {
       resize();
     });

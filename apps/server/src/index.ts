@@ -45,9 +45,12 @@ app.get("/stats", async (req, res) => {
     const remote = await collectRemoteStats(host.trim());
     if (remote) {
       res.json(remote);
-      return;
+    } else {
+      // Never substitute local stats for a remote target — the client
+      // shows a placeholder until real target data arrives.
+      res.status(503).json({ error: `stats unavailable for ${host.trim()}` });
     }
-    // Fall through to local stats if remote fails
+    return;
   }
   res.json(collectStats());
 });

@@ -18,19 +18,44 @@ export interface DeviceIdentity {
   privateKey: string; // base64url(raw 32 bytes)
 }
 
+// Dependency-free base64url (no btoa/atob — not guaranteed in the RN runtime).
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const B64_LOOKUP: Record<string, number> = {};
+for (let i = 0; i < B64.length; i++) B64_LOOKUP[B64[i]] = i;
+
 function b64urlEncode(bytes: Uint8Array): string {
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
+  let out = "";
+  let i = 0;
+  for (; i + 2 < bytes.length; i += 3) {
+    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+    out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63] + B64[(n >> 6) & 63] + B64[n & 63];
+  }
+  if (i < bytes.length) {
+    const rem = bytes.length - i;
+    if (rem === 1) {
+      const n = bytes[i] << 16;
+      out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63];
+    } else {
+      const n = (bytes[i] << 16) | (bytes[i + 1] << 8);
+      out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63] + B64[(n >> 6) & 63];
+    }
+  }
+  return out;
 }
 
 function b64urlDecode(input: string): Uint8Array {
-  const normalized = input.replaceAll("-", "+").replaceAll("_", "/");
-  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
-  const binary = atob(padded);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
-  return out;
+  const clean = input.replace(/[^A-Za-z0-9\-_]/g, "");
+  const out: number[] = [];
+  for (let i = 0; i < clean.length; i += 4) {
+    const c0 = B64_LOOKUP[clean[i]];
+    const c1 = B64_LOOKUP[clean[i + 1]];
+    const c2 = clean[i + 2] !== undefined ? B64_LOOKUP[clean[i + 2]] : undefined;
+    const c3 = clean[i + 3] !== undefined ? B64_LOOKUP[clean[i + 3]] : undefined;
+    out.push((c0 << 2) | (c1 >> 4));
+    if (c2 !== undefined) out.push(((c1 & 15) << 4) | (c2 >> 2));
+    if (c2 !== undefined && c3 !== undefined) out.push(((c2 & 3) << 6) | c3);
+  }
+  return new Uint8Array(out);
 }
 
 function toHex(bytes: Uint8Array): string {

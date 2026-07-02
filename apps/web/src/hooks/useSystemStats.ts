@@ -35,6 +35,9 @@ export function useSystemStats(pollMs = 5000, sshHost?: string) {
 
   useEffect(() => {
     let mounted = true;
+    // The target changed — drop any previous host's numbers immediately so
+    // nothing is shown until this target actually reports.
+    setStats(null);
 
     const fetchStats = async () => {
       try {
@@ -42,7 +45,7 @@ export function useSystemStats(pollMs = 5000, sshHost?: string) {
           ? `http://localhost:3001/stats?host=${encodeURIComponent(sshHost)}`
           : "http://localhost:3001/stats";
         const res = await fetch(url);
-        if (!mounted) return;
+        if (!mounted || !res.ok) return;
         const data = (await res.json()) as SystemStats;
         if (mounted) setStats(data);
       } catch (err) {

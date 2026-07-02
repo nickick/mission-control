@@ -123,6 +123,12 @@ export async function subscribeSessionMessages(c: GatewayClient, sessionKey: str
   await c.request("sessions.messages.subscribe", { key: sessionKey });
 }
 
+// Broad session-events subscription — required to receive session.tool (live
+// tool-call activity) in addition to session.message.
+export async function subscribeSessionEvents(c: GatewayClient): Promise<void> {
+  await c.request("sessions.subscribe", {});
+}
+
 export async function sendChat(c: GatewayClient, sessionKey: string, message: string): Promise<void> {
   await c.request("chat.send", {
     sessionKey,
